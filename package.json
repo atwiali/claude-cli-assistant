@@ -20,7 +20,8 @@
   },
   "homepage": "https://github.com/atwiali/claude-cli-assistant#readme",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.78.0"
+    "@anthropic-ai/sdk": "^0.78.0",
+    "dotenv": "^17.3.1"
   },
   "devDependencies": {
     "@types/node": "^25.3.3",

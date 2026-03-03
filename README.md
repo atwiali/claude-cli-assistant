@@ -12,10 +12,15 @@ A terminal-based assistant that can read/write files, run shell commands, and se
 ```bash
 # Install dependencies
 npm install
-
-# Set your API key
-export ANTHROPIC_API_KEY="sk-ant-..."
 ```
+
+Create a `.env` file in the project root with your API key:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+> The `.env` file is already in `.gitignore` so your key won't be committed.
 
 ## Usage
 
@@ -32,8 +37,9 @@ npm start
 
 ```
 src/
-├── index.ts   — Entry point: initializes the Anthropic client and sends a dry-run request
-└── tools.ts   — Tool definitions (JSON Schema) passed to the Claude API
+├── index.ts          — Entry point: interactive chat loop with agentic tool execution
+├── tools.ts          — Tool definitions (JSON Schema) passed to the Claude API
+└── tool-handlers.ts  — Execution logic for each tool (read, write, run)
 ```
 
 ## Available Tools

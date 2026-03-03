@@ -3,12 +3,18 @@
  *
  * This file wires everything together:
  *  1. Creates an Anthropic client (authenticated via env var).
- *  2. Sends a "dry run" message to Claude along with our tool definitions.
- *  3. Prints the raw JSON response so we can inspect the content array.
+ *  2. Reads user input from the terminal.
+ *  3. Sends messages to Claude along with tool definitions.
+ *  4. When Claude requests a tool, executes it and feeds the result back.
+ *  5. Loops until Claude finishes its response, then prompts for the next input.
  */
 
+import "dotenv/config"; // Load .env file into process.env
 import Anthropic from "@anthropic-ai/sdk";
-import { tools } from "./tools.js"; // .js extension required for ESM imports
+import { createInterface } from "node:readline/promises";
+import { stdin, stdout } from "node:process";
+import { tools } from "./tools.js";
+import { executeTool } from "./tool-handlers.js";
 
 /* ------------------------------------------------------------------ */
 /*  Client setup                                                      */
@@ -16,83 +22,123 @@ import { tools } from "./tools.js"; // .js extension required for ESM imports
 
 /**
  * The SDK automatically reads `ANTHROPIC_API_KEY` from the environment,
- * so we don't need to pass it explicitly.  If the key is missing the
- * SDK will throw a clear error at call time.
+ * so we don't need to pass it explicitly.
  */
 const client = new Anthropic();
 
+/** Conversation history — persists across turns so Claude has full context. */
+const messages: Anthropic.Messages.MessageParam[] = [];
+
 /* ------------------------------------------------------------------ */
-/*  Dry-run function                                                  */
+/*  Agentic loop                                                      */
 /* ------------------------------------------------------------------ */
 
 /**
- * Sends a simple prompt to Claude together with our tool definitions.
+ * Processes a single user message through the full agentic loop:
  *
- * This is a "dry run" — we just want to see Claude's response when it
- * knows tools are available.  We're NOT executing any tools yet; that
- * comes in a later step.
- *
- * @returns The full API response object from `messages.create()`.
+ *  1. Append the user message to conversation history.
+ *  2. Call the Claude API with the full history + tool definitions.
+ *  3. Print any text Claude returns.
+ *  4. If Claude's `stop_reason` is `"tool_use"`, execute each requested
+ *     tool, append the results, and loop back to step 2.
+ *  5. If `stop_reason` is `"end_turn"`, we're done — return to the prompt.
  */
-async function dryRun() {
-  const response = await client.messages.create({
-    /**
-     * `model` — Which Claude model to use.
-     * "claude-sonnet-4-20250514" is fast, capable, and cost-effective
-     * for development and testing.
-     */
-    model: "claude-sonnet-4-20250514",
+async function handleUserMessage(userText: string): Promise<void> {
+  // Step 1: Add the user's message to the conversation history
+  messages.push({ role: "user", content: userText });
 
-    /**
-     * `max_tokens` — Upper limit on how many tokens Claude can generate
-     * in its reply.  1024 is plenty for a short acknowledgement.
-     */
-    max_tokens: 1024,
+  // Step 2–5: Keep calling Claude until it stops requesting tools
+  while (true) {
+    const response = await client.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 4096,
+      tools,
+      messages,
+    });
 
-    /**
-     * `tools` — The array of tool definitions from tools.ts.
-     * Claude uses these schemas to understand *what* it can do.
-     * It may respond with a `tool_use` content block if it decides
-     * a tool is needed, or with plain text if it doesn't.
-     */
-    tools,
+    // Step 3: Print any text blocks Claude returned
+    for (const block of response.content) {
+      if (block.type === "text") {
+        console.log(`\nClaude: ${block.text}`);
+      }
+    }
 
-    /**
-     * `messages` — The conversation history.
-     * For this dry run we send a single user message that should
-     * prompt Claude to acknowledge the available tools.
-     */
-    messages: [
-      {
-        role: "user",
-        content:
-          "Hello! Can you see my tools? Please list them and briefly describe what each one does.",
-      },
-    ],
-  });
+    // Step 4a: If Claude is done talking, exit the loop
+    if (response.stop_reason === "end_turn") {
+      // Save the assistant's response to history for future context
+      messages.push({ role: "assistant", content: response.content });
+      break;
+    }
 
-  return response;
+    // Step 4b: If Claude wants to use tools, execute them
+    if (response.stop_reason === "tool_use") {
+      // Save the assistant's tool_use response to history
+      messages.push({ role: "assistant", content: response.content });
+
+      // Execute each tool and collect results
+      const toolResults: Anthropic.Messages.ToolResultBlockParam[] = [];
+
+      for (const block of response.content) {
+        if (block.type === "tool_use") {
+          console.log(`\n[Tool Call] ${block.name}(${JSON.stringify(block.input)})`);
+
+          const result = await executeTool(
+            block.name,
+            block.input as Record<string, string>
+          );
+
+          console.log(`[Tool Result] ${result.slice(0, 200)}${result.length > 200 ? "..." : ""}`);
+
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: block.id,
+            content: result,
+          });
+        }
+      }
+
+      // Send all tool results back to Claude in a single user message
+      messages.push({ role: "user", content: toolResults });
+
+      // Loop back to step 2 — Claude will continue with the tool results
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */
-/*  Main                                                              */
+/*  Interactive prompt                                                */
 /* ------------------------------------------------------------------ */
 
 /**
- * Top-level async IIFE that runs the dry-run call and prints
- * the full JSON response to the console.
+ * Main loop: reads user input line-by-line and processes each message.
+ * Type "exit" or "quit" to end the session.
  */
-(async () => {
-  console.log("Sending dry-run request to Claude...\n");
+async function main(): Promise<void> {
+  const rl = createInterface({ input: stdin, output: stdout });
 
-  try {
-    const response = await dryRun();
+  console.log("Claude CLI Assistant");
+  console.log("Type your message and press Enter. Type 'exit' to quit.\n");
 
-    // Pretty-print the entire response so we can study the structure
-    console.log("=== Raw API Response ===\n");
-    console.log(JSON.stringify(response, null, 2));
-  } catch (error) {
-    console.error("API call failed:", error);
-    process.exit(1);
+  while (true) {
+    const userInput = await rl.question("You: ");
+
+    // Check for exit commands
+    if (["exit", "quit"].includes(userInput.trim().toLowerCase())) {
+      console.log("Goodbye!");
+      rl.close();
+      break;
+    }
+
+    // Skip empty input
+    if (!userInput.trim()) continue;
+
+    try {
+      await handleUserMessage(userInput);
+    } catch (error) {
+      console.error("\nError:", error instanceof Error ? error.message : error);
+    }
   }
-})();
+}
+
+// Start the assistant
+main();
