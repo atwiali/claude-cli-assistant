@@ -1,0 +1,29 @@
+{
+  "name": "claude-cli-assistant",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "A terminal-based assistant that can read/write files, run shell commands, and search the web all through Claude tool use.",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/atwiali/claude-cli-assistant.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/atwiali/claude-cli-assistant/issues"
+  },
+  "homepage": "https://github.com/atwiali/claude-cli-assistant#readme",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "typescript": "^5.9.3"
+  }
+}
